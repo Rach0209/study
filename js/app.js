@@ -29,7 +29,7 @@ TRACKS.forEach(t => t.lessons.forEach((l, idx) => {
 
 /* ---------- 저장소 ---------- */
 let storageOK = true;
-const blank = () => ({ v: 1, lessons: {}, cards: {}, ex: {}, log: {} });
+const blank = () => ({ v: 1, lessons: {}, cards: {}, ex: {}, log: {}, last: null });
 let S = blank();
 try { S = Object.assign(blank(), JSON.parse(localStorage.getItem(KEY) || 'null') || {}); } catch (e) { storageOK = false; }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { storageOK = false; } }
@@ -253,6 +253,8 @@ function wrongList(results) {
 /* ---------- 화면: 홈 ---------- */
 function viewHome() {
   const nx = nextLesson(), due = dueCards().length;
+  const lastRef = S.last && LES[S.last];
+  const resume = lastRef ? { track: lastRef.track, lesson: lastRef.lesson } : nx;
   const doneAll = TRACKS.reduce((n, t) => n + trackProgress(t).done, 0);
   const totalAll = TRACKS.reduce((n, t) => n + t.lessons.length, 0);
   const solved = S.log[today()] || 0;
@@ -273,7 +275,8 @@ function viewHome() {
       <li>${nx ? `새 레슨: <a href="#/lesson/${nx.lesson.id}"><b>${esc(nx.track.title)} · ${esc(nx.lesson.title)}</b></a>` : '모든 레슨을 마쳤어요 🎉 오답노트를 정리해 보세요.'}</li>
       <li>레슨의 <b>"직접 해보기"</b>는 눈으로만 읽지 말고 실제로 코드를 쳐서 실행해 보기</li>
     </ol>
-    ${nx ? `<a class="btn" href="#/lesson/${nx.lesson.id}">이어서 학습하기 →</a>` : ''}
+    ${resume ? `<a class="btn" href="#/lesson/${resume.lesson.id}">이어서 학습하기 →</a>
+    <span class="muted">${lastRef ? '마지막으로 연 레슨' : '첫 레슨'}: ${esc(resume.track.title)} · ${esc(resume.lesson.title)}</span>` : ''}
   </div>
   <h2>학습 트랙</h2>
   ${TRACKS.map(t => { const p = trackProgress(t); return `<a class="card track-card" style="display:block;color:inherit;border-left-color:${t.color}" href="#/track/${t.id}">
@@ -307,7 +310,8 @@ function viewLesson(id) {
   const ref = LES[id]; if (!ref) return notFound();
   const { lesson: l, track: t, idx } = ref, st = S.lessons[id] || {};
   const prev = t.lessons[idx - 1], next = t.lessons[idx + 1];
-  const sec = (title, body) => body ? `<h2>${title}</h2>${body}` : '';
+  if (S.last !== id) { S.last = id; save(); }
+  const sec =(title, body) => body ? `<h2>${title}</h2>${body}` : '';
   const html = `
   <article class="lesson" style="--accent:${t.color}">
   <div class="crumb"><a href="#/">홈</a> › <a href="#/track/${t.id}">${esc(t.title)}</a> › ${esc(l.unit || '')}</div>
