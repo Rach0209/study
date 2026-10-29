@@ -29,11 +29,103 @@ TRACKS.forEach(t => t.lessons.forEach((l, idx) => {
 
 /* ---------- 저장소 ---------- */
 let storageOK = true;
-const blank = () => ({ v: 1, lessons: {}, cards: {}, ex: {}, log: {}, last: null });
+const blank = () => ({ v: 1, lessons: {}, cards: {}, ex: {}, exT: {}, log: {}, last: null, lastT: 0, resetAt: 0 });
 let S = blank();
 try { S = Object.assign(blank(), JSON.parse(localStorage.getItem(KEY) || 'null') || {}); } catch (e) { storageOK = false; }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { storageOK = false; } }
+function save(fromSync) {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { storageOK = false; }
+  if (!fromSync) scheduleSync();
+}
 function logActivity(n = 1) { const d = today(); S.log[d] = (S.log[d] || 0) + n; }
+
+/* ---------- 기기 간 동기화 (GitHub Gist) ----------
+ * 토큰은 이 브라우저(localStorage 'study.sync')에만 저장되며 백업 파일에는 들어가지 않습니다.
+ * 진도는 비공개(secret) Gist 의 study-progress.json 한 파일로 저장되고, 병합 규칙은 js/merge.js.
+ */
+const SYNC_KEY = 'study.sync', GIST_FILE = 'study-progress.json';
+const SY = { token: '', gistId: '', at: 0, err: '', busy: false };
+try { const d = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null') || {}; SY.token = d.token || ''; SY.gistId = d.gistId || ''; SY.at = d.at || 0; } catch (e) { /* 저장소 불가 */ }
+const saveSY = () => { try { localStorage.setItem(SYNC_KEY, JSON.stringify({ token: SY.token, gistId: SY.gistId, at: SY.at })); } catch (e) { /* 무시 */ } };
+const norm = x => StudyMerge.merge(x, blank());
+let syncTimer = 0, syncAgain = false;
+
+async function gh(path, opt = {}) {
+  const r = await fetch('https://api.github.com' + path, Object.assign({}, opt, {
+    headers: { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + SY.token, 'Content-Type': 'application/json' },
+  }));
+  if (!r.ok) { const e = new Error('HTTP ' + r.status); e.status = r.status; throw e; }
+  return r.json();
+}
+async function findGist() {
+  for (let page = 1; page <= 5; page++) {
+    const list = await gh(`/gists?per_page=100&page=${page}`);
+    const hit = list.find(g => g.files && g.files[GIST_FILE]);
+    if (hit) return hit.id;
+    if (list.length < 100) break;
+  }
+  return '';
+}
+async function readRemote(id) {
+  let g;
+  try { g = await gh('/gists/' + id); } catch (e) { if (e.status === 404) return { gone: true }; throw e; }
+  const f = g.files && g.files[GIST_FILE];
+  if (!f) return { gone: true };
+  const text = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
+  const data = JSON.parse(text);
+  return data && data.v === 1 ? { data } : { gone: true };
+}
+function syncMessage(e) {
+  if (e.status === 401) return '토큰이 올바르지 않거나 만료됐어요. 새로 발급해서 다시 연결해 주세요.';
+  if (e.status === 403) return 'GitHub가 요청을 거부했어요. 토큰에 gist 권한이 있는지 확인해 주세요. (잠시 뒤 재시도)';
+  if (e instanceof TypeError) return '인터넷에 연결할 수 없어요. 연결되면 자동으로 다시 시도합니다.';
+  return '동기화 실패: ' + e.message;
+}
+function scheduleSync() {
+  if (!SY.token) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, 3000);
+}
+async function syncNow() {
+  if (!SY.token) return false;
+  if (SY.busy) { syncAgain = true; return false; }
+  clearTimeout(syncTimer);
+  SY.busy = true; SY.err = '';
+  let ok = false;
+  try {
+    let remote = null;
+    if (!SY.gistId) SY.gistId = await findGist();
+    if (SY.gistId) {
+      const r = await readRemote(SY.gistId);
+      if (r.gone) SY.gistId = ''; else remote = r.data;
+    }
+    const merged = StudyMerge.merge(S, remote || blank());
+    const mine = StudyMerge.stable(norm(S)), theirs = remote ? StudyMerge.stable(norm(remote)) : '';
+    const changedLocal = StudyMerge.stable(merged) !== mine;
+    if (changedLocal) { Object.assign(S, merged); save(true); }
+    if (StudyMerge.stable(merged) !== theirs) {
+      if (SY.gistId) {
+        await gh('/gists/' + SY.gistId, { method: 'PATCH', body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(merged) } } }) });
+      } else {
+        const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: '독학 스터디 진도 (자동 생성 · 수정하지 마세요)', public: false, files: { [GIST_FILE]: { content: JSON.stringify(merged) } } }) });
+        SY.gistId = g.id;
+      }
+    }
+    SY.at = Date.now(); saveSY(); ok = true;
+    if (changedLocal) onMerged();
+  } catch (e) {
+    SY.err = syncMessage(e);
+    if (e.status === 401) { SY.token = ''; SY.gistId = ''; saveSY(); }
+  } finally {
+    SY.busy = false;
+    if (syncAgain) { syncAgain = false; scheduleSync(); }
+    if (location.hash === '#/settings') route();
+  }
+  return ok;
+}
+// 다른 기기의 기록이 합쳐졌을 때 화면 갱신. 퀴즈 중에는 화면을 건드리지 않는다.
+function onMerged() {
+  if (/^#\/(lesson|review)/.test(location.hash)) renderSide(); else route();
+}
 
 /* ---------- 복습 카드 (라이트너 박스) ----------
  * 틀린 문제 → 박스 1. 복습에서 맞힐 때마다 박스+1, 간격은 1·3·7·14일. 박스 6 이 되면 '정복'.
@@ -41,11 +133,11 @@ function logActivity(n = 1) { const d = today(); S.log[d] = (S.log[d] || 0) + n;
 const INTERVALS = [0, 0, 1, 3, 7, 14];
 function cardWrong(id) {
   const c = S.cards[id] || (S.cards[id] = { box: 1, due: today(), wrong: 0 });
-  c.box = 1; c.due = today(); c.wrong++; c.mastered = false;
+  c.box = 1; c.due = today(); c.wrong++; c.mastered = false; c.t = Date.now();
 }
 function cardRight(id) {
   const c = S.cards[id]; if (!c || c.mastered) return;
-  c.box++;
+  c.box++; c.t = Date.now();
   if (c.box >= 6) { c.mastered = true; } else { c.due = addDays(today(), INTERVALS[c.box]); }
 }
 const dueCards = () => Object.keys(S.cards).filter(id => QS[id] && !S.cards[id].mastered && S.cards[id].due <= today());
@@ -310,7 +402,7 @@ function viewLesson(id) {
   const ref = LES[id]; if (!ref) return notFound();
   const { lesson: l, track: t, idx } = ref, st = S.lessons[id] || {};
   const prev = t.lessons[idx - 1], next = t.lessons[idx + 1];
-  if (S.last !== id) { S.last = id; save(); }
+  if (S.last !== id) { S.last = id; S.lastT = Date.now(); save(); }
   const sec =(title, body) => body ? `<h2>${title}</h2>${body}` : '';
   const html = `
   <article class="lesson" style="--accent:${t.color}">
@@ -349,7 +441,7 @@ function viewLesson(id) {
         onDone(results) {
           const right = results.filter(r => r.ok).length, pct = Math.round(right / results.length * 100);
           const rec = S.lessons[id] || (S.lessons[id] = { attempts: 0, best: 0, done: false });
-          rec.attempts++; rec.best = Math.max(rec.best, pct); rec.last = today();
+          rec.attempts++; rec.best = Math.max(rec.best, pct); rec.last = today(); rec.t = Date.now();
           const passed = pct >= 80; if (passed) rec.done = true;
           save(); renderSide();
           area.innerHTML = `<div class="qcard"><div class="result-big">${right} / ${results.length} <span class="muted" style="font-size:1rem">(${pct}%)</span></div>
@@ -412,15 +504,45 @@ function viewRoadmap() {
   ${PLANNED.map(p => `<div class="card planned"><b>${p.icon} ${esc(p.title)}</b> <span class="badge warn">${esc(p.when)}</span>
     <p class="muted" style="margin:4px 0">${esc(p.why)}</p><ul>${p.topics.map(x => `<li>${inline(x)}</li>`).join('')}</ul></div>`).join('')}`;
 }
+function syncCard() {
+  const when = SY.at ? new Date(SY.at).toLocaleString('ko-KR') : '';
+  const err = SY.err ? `<div class="warnbox">${esc(SY.err)}</div>` : '';
+  if (SY.token) return `<div class="card"><h3 style="margin-top:0">☁ 기기 간 동기화 <span class="badge ok">연결됨</span></h3>
+    ${err}<p class="muted">${SY.busy ? '동기화 중…' : (when ? '마지막 동기화: ' + esc(when) : '아직 동기화 전')} · 문제를 풀면 몇 초 뒤 자동으로 저장돼요.</p>
+    <div class="row"><button class="btn" data-act="syncnow">지금 동기화</button>
+    <button class="btn ghost" data-act="syncoff">이 기기에서 연결 해제</button></div>
+    <p class="muted" style="margin-top:8px">연결 해제는 이 기기의 토큰만 지웁니다. GitHub의 비공개 Gist(진도 파일)는 남아 있어요.</p></div>`;
+  return `<div class="card"><h3 style="margin-top:0">☁ 기기 간 동기화</h3>${err}
+    <p>폰과 PC가 같은 진도를 쓰게 합니다. 내 GitHub 계정의 <b>비공개 Gist</b> 한 개에 진도만 저장해요.</p>
+    <ol><li><a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=study-sync" target="_blank" rel="noopener">여기</a>에서 토큰 발급 (classic · <b>gist</b> 권한만 체크 · 만료일 설정)</li>
+    <li>만든 토큰(<code>ghp_…</code>)을 아래에 붙여 넣고 연결</li>
+    <li>다른 기기에서도 같은 토큰으로 연결하면 끝</li></ol>
+    <div class="row"><input type="password" data-sync="token" placeholder="ghp_…" autocomplete="off" spellcheck="false" style="flex:1;min-width:200px;padding:8px;border:1px solid var(--line,#ccc);border-radius:8px;background:transparent;color:inherit">
+    <button class="btn" data-act="syncon">연결</button></div>
+    <p class="muted" style="margin-top:8px">토큰은 이 브라우저에만 저장되고, 진도 백업 파일에는 들어가지 않습니다.</p></div>`;
+}
 function viewSettings() {
   return { html: `<h1>⚙ 설정 · 백업</h1>
+  ${syncCard()}
   <div class="card"><h3 style="margin-top:0">진도 백업 / 복원</h3>
-    <p>진도는 <b>이 브라우저</b>에만 저장됩니다. 브라우저를 바꾸거나 사이트 데이터를 지우면 사라지니, 가끔 백업해 두세요.</p>
+    <p>진도는 <b>이 브라우저</b>에 저장됩니다(위에서 동기화를 켜면 GitHub Gist에도 보관). 사이트 데이터를 지우면 이 기기의 기록이 사라지니, 가끔 백업해 두세요.</p>
     <div class="row"><button class="btn" data-act="export">백업 파일 저장</button>
     <label class="btn ghost">백업 파일 불러오기<input type="file" accept="application/json" hidden data-act="import"></label></div></div>
   <div class="card"><h3 style="margin-top:0">초기화</h3><p>모든 진도와 오답노트를 지웁니다.</p><button class="btn ghost" data-act="reset" style="color:var(--bad);border-color:var(--bad)">전체 초기화</button></div>
   <div class="card"><h3 style="margin-top:0">단축키</h3><p>퀴즈: <code>1</code>~<code>4</code> 보기 선택 · <code>Enter</code> 다음 문제</p></div>`,
   after() {
+    const on = $app.querySelector('[data-act="syncon"]');
+    if (on) on.onclick = async () => {
+      const token = $app.querySelector('[data-sync="token"]').value.trim();
+      if (!token) return;
+      SY.token = token; SY.gistId = ''; SY.err = '';
+      on.disabled = true; on.textContent = '연결 중…';
+      if (!(await syncNow())) { if (SY.token) { SY.token = ''; saveSY(); } route(); }
+    };
+    const now = $app.querySelector('[data-act="syncnow"]');
+    if (now) now.onclick = () => { syncNow(); route(); };
+    const off = $app.querySelector('[data-act="syncoff"]');
+    if (off) off.onclick = () => { if (confirm('이 기기의 동기화 연결을 해제할까요? (진도는 그대로 남습니다)')) { SY.token = ''; SY.gistId = ''; SY.at = 0; SY.err = ''; saveSY(); route(); } };
     $app.querySelector('[data-act="export"]').onclick = () => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' }));
@@ -432,7 +554,7 @@ function viewSettings() {
       r.onload = () => { try { const d = JSON.parse(r.result); if (!d || d.v !== 1) throw 0; S = Object.assign(blank(), d); save(); alert('불러왔어요!'); route(); } catch { alert('올바른 백업 파일이 아닙니다.'); } };
       r.readAsText(f);
     };
-    $app.querySelector('[data-act="reset"]').onclick = () => { if (confirm('정말 모든 진도를 지울까요? 되돌릴 수 없습니다.')) { S = blank(); save(); route(); } };
+    $app.querySelector('[data-act="reset"]').onclick = () => { if (confirm('정말 모든 진도를 지울까요? 되돌릴 수 없습니다.' + (SY.token ? '\n(동기화 중이면 연결된 다른 기기에도 초기화가 반영됩니다)' : ''))) { S = blank(); S.resetAt = Date.now(); save(); route(); } };
   } };
 }
 function notFound() { return '<h1>찾을 수 없어요</h1><a href="#/">홈으로</a>'; }
@@ -481,8 +603,10 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', e => {
   const x = e.target.dataset && e.target.dataset.ex;
-  if (x) { S.ex[x] = e.target.checked; save(); }
+  if (x) { S.ex[x] = e.target.checked; S.exT[x] = Date.now(); save(); }
 });
 window.addEventListener('hashchange', route);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNow(); });
 route();
+syncNow();
 })();

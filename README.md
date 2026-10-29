@@ -34,6 +34,17 @@
 
 진도는 브라우저에 저장됩니다. **⚙ 설정·백업** 에서 백업 파일을 저장해 두세요.
 
+## 폰·PC 동기화 (GitHub Gist, 선택)
+
+GitHub 토큰을 한 번 넣으면 기기 간 진도(이어서 학습하기, 완료 레슨, 오답노트)가 합쳐집니다.
+
+1. https://github.com/settings/tokens/new?scopes=gist&description=study-sync 에서 **classic 토큰**을 만듭니다. 권한은 **gist 하나만**, 만료일은 90일 등으로 설정합니다.
+2. 앱의 **⚙ 설정·백업 → 기기 간 동기화**에 토큰(`ghp_…`)을 붙여 넣고 **연결**합니다. 계정에 비공개 Gist 가 하나 생깁니다.
+3. 다른 기기에서도 같은 토큰으로 연결하면 끝입니다.
+
+- 토큰은 그 기기 브라우저에만 저장되고 백업 파일에는 들어가지 않습니다. 의심되면 GitHub 에서 토큰을 삭제하면 즉시 무효가 됩니다.
+- 병합 규칙은 `js/merge.js` 에 있고 `node tools/test-merge.js` 로 테스트합니다.
+
 ## 준비물
 
 - Python: python.org 에서 3.10 이상
@@ -46,7 +57,8 @@
 ```
 index.html          앱 진입점
 css/style.css       디자인 (다크 모드 자동)
-js/app.js           앱 엔진 (화면, 퀴즈, 오답노트/복습, 진도 저장)
+js/app.js           앱 엔진 (화면, 퀴즈, 오답노트/복습, 진도 저장, Gist 동기화)
+js/merge.js         두 기기의 진도를 합치는 순수 함수 (tools/test-merge.js 로 테스트)
 content/            ← 강의 내용. 여기만 고치면 됨
   roadmap.js        예정 트랙 목록
   python.js  cpp-1.js  cpp-2.js  java.js
