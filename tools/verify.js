@@ -5,7 +5,8 @@
  *   node tools/verify.js --no-run   구조만 검사
  *
  * 1) 구조 검사: 필수 필드, 퀴즈 정답 인덱스, 중복 id 등
- * 2) 예제 실행: examples[].code 를 실제로 실행해 output 과 비교 (python / java / cpp)
+ * 2) 예제 실행: examples[].code 를 실제로 실행해 output 과 비교 (python / java / cpp / sql)
+ *    - sql 은 python 내장 SQLite 로 실행 (tools/sqlrun.py). SQLite 에 없는 Oracle 전용 문법은 noverify: true
  *    - 컴파일러가 없으면 해당 언어는 건너뜁니다 (C++ 는 g++ / clang++ 필요)
  *    - 출력 비교가 불가능한 예제는 noverify: true 로 표시
  */
@@ -69,11 +70,16 @@ const tools = {
   python: which('python') || which('python3'),
   java: which('java') && which('javac') ? 'java' : null,
   cpp: which('g++') || which('clang++'),
+  sql: which('python') || which('python3'),   // tools/sqlrun.py (SQLite)
 };
 const norm = s => s.replace(/\r/g, '').split('\n').map(l => l.replace(/\s+$/, '')).join('\n').replace(/^\n+|\n+$/g, '');
 
-function runExample(lang, code, stdin, dir) {
+function runExample(lang, code, stdin, dir, ex) {
   const opt = { cwd: dir, input: stdin || '', encoding: 'utf8', timeout: 60000, env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } };
+  if (lang === 'sql') {   // prelude: true 이면 공통 실습 테이블(SQLD_COMMON)을 앞에 붙여 실행
+    fs.writeFileSync(path.join(dir, 'ex.sql'), (ex && ex.prelude ? sandbox.SQLD_COMMON + '\n' : '') + code);
+    return cp.spawnSync(tools.python, ['-I', '-X', 'utf8', path.join(__dirname, 'sqlrun.py'), 'ex.sql'], opt);
+  }
   if (lang === 'python') { fs.writeFileSync(path.join(dir, 'ex.py'), code); return cp.spawnSync(tools.python, ['-I', '-X', 'utf8', 'ex.py'], opt); }
   if (lang === 'java') {
     fs.writeFileSync(path.join(dir, 'Main.java'), code);
@@ -94,18 +100,22 @@ if (!noRun) {
   const skipped = {};
   for (const t of tracks) for (const l of t.lessons) (l.examples || []).forEach((e, i) => {
     const w = `${l.id} 예제${i + 1} "${e.title}"`;
+    if (e.output === '@@') { err(w, 'output 이 비어 있음 → node tools/fill-sql.js 로 채우세요'); stat.fail++; return; }
     if (e.output == null || e.noverify) { stat.skip++; return; }
     const lang = e.lang === 'c' ? 'cpp' : e.lang;
     if (!tools[lang]) { stat.skip++; skipped[lang] = (skipped[lang] || 0) + 1; return; }
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'study-verify-'));
     try {
-      const r = runExample(lang, e.code.replace(/^\n/, ''), e.stdin, dir);
+      const r = runExample(lang, e.code.replace(/^\n/, ''), e.stdin, dir, e);
       if (r.error) { err(w, `실행 실패: ${r.error.message}`); stat.fail++; return; }
       if (r.status !== 0) { err(w, `종료 코드 ${r.status}\n${(r.stderr || '').slice(0, 600)}`); stat.fail++; return; }
       if (norm(r.stdout) !== norm(e.output)) {
         err(w, `출력 불일치\n--- 기대 ---\n${norm(e.output)}\n--- 실제 ---\n${norm(r.stdout)}\n------------`); stat.fail++;
       } else stat.ok++;
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally {
+      // Windows 에서 백신이 방금 만든 exe/임시 파일을 잠깐 붙잡고 있으면 삭제가 EBUSY 로 실패 → 재시도, 그래도 안 되면 무시
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }); } catch (e) { /* 임시 폴더 정리 실패는 검증 결과와 무관 */ }
+    }
   });
   console.log(`예제 실행: 통과 ${stat.ok}, 실패 ${stat.fail}, 건너뜀 ${stat.skip}` +
     Object.entries(skipped).map(([k, v]) => ` (${k} 컴파일러 없음: ${v}개 미검증)`).join(''));

@@ -3,13 +3,16 @@
 프로그래밍 기초를 **오해 없이, 순서대로** 독학하기 위한 로컬 학습 앱입니다.
 설치할 것 없이 `index.html` 을 열면 됩니다 (또는 `start.bat` 더블클릭).
 
-## 커리큘럼 (총 28강)
+## 커리큘럼 (총 46강)
 
 | 순서 | 트랙 | 강의 | 핵심 |
 |---|---|---|---|
 | 1 | 🐍 Python 기초 | 10강 | 변수 → 조건/반복 → 리스트/딕셔너리 → 함수 → 파일/예외 → 클래스 |
 | 2 | ⚙️ C++ 기초 | 10강 | 컴파일 모델 → 타입/메모리 → 함수/참조 → 포인터 → RAII/스마트 포인터 → 클래스 → 상속/다형성 → STL |
 | 3 | ☕ Java 기초 | 8강 | JVM → 타입/String → 배열 → 객체/참조 → 상속/인터페이스 → 컬렉션 → 예외 → 람다/스트림 |
+| 4 | 🗄️ SQLD 자격증 | 18강 | 시험 안내 → 데이터 모델링(과목1, 4강) → SQL 기본(SELECT·함수·WHERE·GROUP BY·조인) → SQL 활용(서브쿼리·집합/그룹 함수·윈도우·계층형·PIVOT·정규식) → 관리 구문(DML·TCL·DDL·DCL) → 실전 모의고사 2회 |
+
+**SQLD 트랙**은 한국데이터산업진흥원 SQL 개발자 필기시험(50문항·90분·60점 합격, 과목별 40% 미만 과락) 출제범위를 기준으로 합니다. 시험 일정·응시료는 바뀔 수 있으니 dataq.or.kr 공고를 확인하세요. 문제는 기출 경향을 반영해 **새로 만든 것**이며 실제 기출문제 복원본이 아닙니다. **SQLP 는 SQLD 합격 후 별도 과정**이라 이 트랙에 포함하지 않았습니다.
 
 **왜 C 가 아니라 C++ 인가?** 일반 소프트웨어(게임·금융·자율주행·로봇·AI 추론 엔진) 채용이 넓고, 포인터/메모리 개념은 C 와 공통이라 나중에 임베디드(C)로 가기 쉽습니다.
 
@@ -62,7 +65,11 @@ js/merge.js         두 기기의 진도를 합치는 순수 함수 (tools/test-
 content/            ← 강의 내용. 여기만 고치면 됨
   roadmap.js        예정 트랙 목록
   python.js  cpp-1.js  cpp-2.js  java.js
+  sqld-1.js ~ sqld-4.js   SQLD (시험 안내+모델링 / SQL 기본 / SQL 활용 / 관리 구문+모의고사)
 tools/verify.js     콘텐츠 검증 (구조 + 예제 코드를 실제 실행해 출력 비교)
+tools/sqlrun.py     SQL 예제 실행기 (SQLite). Oracle 함수 일부(NVL, DECODE, REGEXP_* 등)는 흉내
+tools/fill-sql.js   SQL 예제의 `output: '@@'` 를 실제 실행 결과로 채움
+tools/test-merge.js 기기 간 동기화 병합 규칙 테스트
 ```
 
 ## 내용 추가/수정
@@ -82,3 +89,4 @@ node tools/verify.js python     # 한 트랙만
 
 구조 오류(정답 인덱스 등)를 잡고, 예제의 `output` 이 실제 실행 결과와 같은지 확인합니다.
 **C++ 예제는 g++ 또는 clang++ 가 설치되어 있어야 검증됩니다** (없으면 "미검증"으로 표시하고 건너뜀).
+**SQL 예제는 Python 내장 SQLite 로 실행**합니다. SQLite 에 없는 Oracle 전용 문법(ROLLUP/CUBE, CONNECT BY, ROWNUM, PIVOT, `(+)`, ANY/ALL 등)은 `noverify: true` 로 표시하고, 출력은 같은 의미의 표준 SQL 을 SQLite 로 계산한 값을 옮겼습니다. 새 SQL 예제는 `output: '@@'` 로 두고 `node tools/fill-sql.js content/sqld-N.js` 를 실행하면 실행 결과가 채워집니다.

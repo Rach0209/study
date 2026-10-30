@@ -178,6 +178,13 @@ const LANG = {
     str: String.raw`"""[\s\S]*?"""|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'`
   }
 };
+LANG.sql = {
+  ci: true,   // SQL 키워드는 대소문자를 구분하지 않는다
+  kw: words('select from where group by having order asc desc distinct all as and or not in between like is null exists any some union intersect minus except join inner left right full outer cross natural on using case when then else end insert into values update set delete merge matched create table alter add drop modify column truncate rename view index constraint primary key foreign references unique check default commit rollback savepoint grant revoke to with option role start connect prior nvl level rownum over partition rows range unbounded preceding following current row fetch first only offset limit pivot unpivot for rollup cube grouping sets begin transaction replace if'),
+  ty: words('count sum avg min max coalesce nullif nvl2 decode substr substring length upper lower trim ltrim rtrim lpad rpad instr round trunc mod ceil floor abs sign power concat ifnull iif row_number rank dense_rank ntile lag lead first_value last_value percent_rank cume_dist ratio_to_report listagg to_char to_date to_number sysdate varchar varchar2 char number integer int date timestamp decimal numeric text'),
+  cm: String.raw`--[^\n]*|/\*[\s\S]*?\*/`, pp: '(?!)',
+  str: String.raw`'(?:''|[^'])*'`
+};
 LANG.c = LANG.cpp;
 const RE_CACHE = {};
 function highlight(code, lang) {
@@ -195,8 +202,8 @@ function highlight(code, lang) {
     else if (m[2] !== undefined) out += `<span class="tp">${t}</span>`;
     else if (m[3] !== undefined) out += `<span class="ts">${t}</span>`;
     else if (m[4] !== undefined) out += `<span class="tn">${t}</span>`;
-    else if (L.kw.has(m[5])) out += `<span class="tk">${t}</span>`;
-    else if (L.ty.has(m[5])) out += `<span class="tt">${t}</span>`;
+    else if (L.kw.has(L.ci ? m[5].toLowerCase() : m[5])) out += `<span class="tk">${t}</span>`;
+    else if (L.ty.has(L.ci ? m[5].toLowerCase() : m[5])) out += `<span class="tt">${t}</span>`;
     else if (code[last] === '(') out += `<span class="tf">${t}</span>`;
     else out += t;
   }
@@ -253,7 +260,7 @@ function md(text) {
       html += `<blockquote>${inline(buf.join(' '))}</blockquote>`; continue;
     }
     const buf = [];
-    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^```/.test(lines[i]) && !/^###\s/.test(lines[i]) && !/^\s*(-|\d+\.)\s+/.test(lines[i]) && !/^>\s?/.test(lines[i])) buf.push(lines[i++].trim());
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^```/.test(lines[i]) && !/^###\s/.test(lines[i]) && !/^\s*(-|\d+\.)\s+/.test(lines[i]) && !/^>\s?/.test(lines[i]) && !(lines[i].trim().startsWith('|') && isTableSep(lines[i + 1]))) buf.push(lines[i++].trim());
     html += `<p>${inline(buf.join(' '))}</p>`;
   }
   return html;
